@@ -1,0 +1,1 @@
+extends: [../base.yaml, ../model/vector.yaml, ../variants/integrated_aug.yaml]

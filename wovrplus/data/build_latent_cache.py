@@ -152,7 +152,7 @@ def main():
     dtype = getattr(torch, cfg["model"]["dtype"])
     vae = load_vae(cfg["model"]["model_dir"], dtype)
     control = None
-    if cfg["model"]["family"] == "wan_vace":
+    if cfg["model"]["family"] == "raymap_vace":
         control = torch.nn.Module()
         control.vace_in_dim = cfg["model"]["vace_in_dim"]
     pipe = WorldModelPipeline(None, vae, vace=control, dtype=dtype).to(f"cuda:{local}").eval()

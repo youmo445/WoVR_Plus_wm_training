@@ -1,0 +1,7 @@
+extends: adjust_bottle_100k.yaml
+model:
+  family: raymap_vace
+training:
+  trainable: [dit, vace]
+output:
+  task: adjust-bottle-raymap-vace-online-100k-save5k

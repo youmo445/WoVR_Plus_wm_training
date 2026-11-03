@@ -10,8 +10,8 @@ import torch
 from einops import rearrange
 from safetensors.torch import save_file
 from wovrplus.models.wan_dit import WanModel, sinusoidal_embedding_1d
-from wovrplus.models.action import WanActionModel
-from wovrplus.models.vace import VaceWanModel
+from wovrplus.models.vector import WanVectorModel
+from wovrplus.models.raymap_vace import RaymapVACEModel
 from wovrplus.models.loading import load_world_checkpoint
 from wovrplus.pipelines.model_fn import model_fn_wan
 from wovrplus.pipelines.world_model import WorldModelPipeline
@@ -62,7 +62,7 @@ class ModelTests(unittest.TestCase):
         for mode in ("cross_attn", "adaln", "cross_attn_and_adaln"):
             for batch in (1, 2):
                 with self.subTest(mode=mode, batch=batch):
-                    model = WanActionModel(**SMALL, action_dim=7, action_mode=mode)
+                    model = WanVectorModel(**SMALL, action_dim=7, action_mode=mode)
                     model.has_action_mode = True
                     model.one_frame_condition = False
                     model.five_frame_condition = True
@@ -110,7 +110,7 @@ class ModelTests(unittest.TestCase):
     def test_action_checkpoint_keys_and_round_trip(self):
         for mode in ("crossattn", "modulation", "both"):
             pipe = torch.nn.Module()
-            pipe.dit = WanActionModel(**SMALL, action_dim=7, action_mode=mode)
+            pipe.dit = WanVectorModel(**SMALL, action_dim=7, action_mode=mode)
             keys = pipe.dit.state_dict()
             self.assertEqual(any(k.startswith("action_mlp1.") for k in keys), mode != "modulation")
             self.assertEqual(any(k.startswith("action_mlp2.") for k in keys), mode != "crossattn")
@@ -133,7 +133,7 @@ class ModelTests(unittest.TestCase):
         for channels in (48, 54, 72, 144):
             with self.subTest(channels=channels):
                 dit = WanModel(**SMALL)
-                vace = VaceWanModel(
+                vace = RaymapVACEModel(
                     vace_layers=(0,),
                     vace_in_dim=channels,
                     dim=48,
@@ -195,11 +195,11 @@ class ModelTests(unittest.TestCase):
 
         for context in (1, 5):
             cfg = resolve_config(
-                [ROOT / "configs/train/robotwin_action.yaml"],
+                [ROOT / "configs/train/robotwin_vector.yaml"],
                 ["model.dtype=float32", f"data.context_frames={context}"],
             )
             pipe = WorldModelPipeline(
-                WanActionModel(**SMALL, action_dim=14), TinyVAE(), dtype=torch.float32
+                WanVectorModel(**SMALL, action_dim=14), TinyVAE(), dtype=torch.float32
             )
             module = WorldModelTrainingModule(cfg, pipe)
             count = context + 8

@@ -1,0 +1,12 @@
+extends: adjust_bottle_motionimage_100k.yaml
+data:
+  cache:
+    mode: read
+condition_cache:
+  kind: motionimage
+  root: ${WOVR_ASSET_ROOT}/cache/adjust-bottle-motionimage
+  allow_partial_for_smoke: false
+  background: 190
+  gripper_gray: 55
+output:
+  task: adjust-bottle-motionimage-cache4-100k-save5k

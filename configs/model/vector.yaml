@@ -1,0 +1,7 @@
+model:
+  family: vector
+  action_mode: adaln
+  use_text: false
+training:
+  trainable: [dit]
+  low_noise_offset: 50

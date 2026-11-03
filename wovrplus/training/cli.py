@@ -17,7 +17,7 @@ def preflight(cfg):
         root / "diffusion_pytorch_model.safetensors"
     ]
     paths = shards + [root / "Wan2.2_VAE.pth"]
-    if cfg["model"]["family"] == "wan_vace" or cfg["model"]["use_text"]:
+    if cfg["model"]["family"] == "raymap_vace" or cfg["model"]["use_text"]:
         paths += [root / "models_t5_umt5-xxl-enc-bf16.pth", Path(cfg["model"]["tokenizer_path"])]
     if cfg["model"]["checkpoint"]:
         paths.append(Path(cfg["model"]["checkpoint"]))
@@ -91,7 +91,7 @@ class Tee:
 
 def main():
     cli = parser().parse_args()
-    cfg = resolve_config(cli.config or [ROOT / "configs/train/robotwin_vace.yaml"], cli.set)
+    cfg = resolve_config(cli.config or [ROOT / "configs/train/robotwin_raymap_vace.yaml"], cli.set)
     if cli.dry_run:
         print(json.dumps(cfg, ensure_ascii=False, indent=2))
         return

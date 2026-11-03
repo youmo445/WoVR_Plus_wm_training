@@ -1,0 +1,8 @@
+extends: adjust_bottle_100k.yaml
+model:
+  family: motionimage
+  use_text: true
+training:
+  trainable: [dit]
+output:
+  task: adjust-bottle-motionimage-online-100k-save5k

@@ -4,7 +4,7 @@
 
 [中文文档](README_zh.md) · [Public dataset](https://huggingface.co/datasets/jzndd/RoboTwin_adjust_bottle_For_ACWM_Training) · [WoVR+ project](https://youmo445.github.io/WoVR_Plus.github.io/) · [Apache-2.0](LICENSE)
 
-Train three action-conditioning families on the same RoboTwin observations: projected action images with VACE, joint vectors with attention/modulation, and PhysCanvas-style projected mesh images. The package includes training, held-out chunk generation, deterministic VAE caching, distributed optimization, and loss diagnostics. It runs independently of a neighboring DiffSynth-Studio checkout.
+Train three action-conditioning families on the same RoboTwin observations: Raymap + VACE, MotionImage + Patch Addition, and vector + AdaLN. The package includes training, held-out chunk generation, deterministic VAE caching, distributed optimization, and loss diagnostics. It runs independently of a neighboring DiffSynth-Studio checkout.
 
 ## Contents
 
@@ -19,19 +19,21 @@ Train three action-conditioning families on the same RoboTwin observations: proj
 - [Loss metrics and profiling](#loss-metrics-and-profiling)
 - [Inference](#inference)
 - [Project structure and tests](#project-structure-and-tests)
-- [Scope and acknowledgements](#scope-and-acknowledgements)
+- [License and citation](#license-and-citation)
 
 ## Supported methods
 
-| Family | Action representation | Injection | Entry script |
+| Method | Action representation | Injection | Entry script (online VAE) |
 |---|---|---|---|
-| **WAN + VACE** | FK-projected colored action images; optional calibrated camera rays | VACE condition branch, initialized from WAN DiT blocks | `scripts/train_vace.sh` |
-| **WAN + joint vectors** | 14D joint targets: left arm 6, left gripper, right arm 6, right gripper | `cross_attn`, `adaln`, or `cross_attn_and_adaln` | `scripts/train_vector.sh` |
-| **WAN + PhysCanvas-style motion** | FK-projected robot link meshes on a grayscale canvas, encoded by WAN VAE | Independent Conv3d motion patch embedding **added to** RGB latent patch embedding | `scripts/train_physcanvas.sh` |
+| **Raymap + VACE (default)** | FK-projected colored action images and calibrated camera rays | VACE conditioning branch initialized from WAN DiT | `scripts/train_raymap_vace.sh` |
+| **MotionImage + Patch Addition** (inspired by [PhysCanvas](https://zebinx.github.io/PhysCanvas_HomePage/)) | FK-projected grayscale robot meshes encoded by WAN VAE | Independent Conv3d action patch embeddings added to video patch embeddings | `scripts/train_motionimage.sh` |
+| **vector + AdaLN** (inspired by [WoVR](https://wovr-rlinf.github.io/)) | 14D joint targets: left arm 6, left gripper, right arm 6, right gripper | Projected actions modulate AdaLN; optional cross-attention or both remain available | `scripts/train_vector_adaln.sh` |
 
-All three start from **original `Wan-AI/Wan2.2-TI2V-5B` weights**. New action projections are initialized separately. The PhysCanvas-style path adapts the action representation/injection concept to RoboTwin; it does not reproduce the full vision/tactile/state system or policy-evaluation stack of that project.
+All three start from **original `Wan-AI/Wan2.2-TI2V-5B` weights**.
 
-The default visual recipe uses three cameras, five context frames, and eight future frames. **Camera images are stacked vertically in RGB space before VAE encoding**; the default per-camera size is 256×320, giving a 768×320 canvas. It is not independent per-view VAE encoding followed by latent concatenation: these operations are not interchangeable near view boundaries. Keep this ordering fixed when comparing recipes or generating caches.
+1. Defaults are three views, five context frames, and eight future frames, with each camera resized to 256×320. **The three views are stacked vertically in RGB space before VAE encoding**, producing a 768×320 canvas.
+2. Raymap and MotionImage require camera intrinsics and extrinsics.
+3. PS: MotionImage + Patch Addition draws on [PhysCanvas](https://zebinx.github.io/PhysCanvas_HomePage/) only for its action representation and injection, without tactile components.
 
 ## Installation
 
@@ -46,7 +48,6 @@ source .venv/bin/activate
 pip install -e '.[distributed,test]'
 ```
 
-PPU launchers optionally source `/usr/local/PPU_SDK/envsetup.sh` when present. All shell scripts use the activated `python`; set `PYTHON=/path/to/python` to select a different environment. GPU count is controlled by `NUM_PROCESSES`, not hard-coded in model code. A small `--dry-run` checks configuration, **not** memory capacity. The full 5B model is not expected to fit on an arbitrary single GPU.
 
 ## Download data and assets
 
@@ -90,35 +91,37 @@ Robot assets are downloaded separately from the official RoboTwin `embodiments.z
 Inspect a configuration without opening weights or data:
 
 ```bash
-bash scripts/train_vace.sh --dry-run
-bash scripts/train_vector.sh --dry-run --set model.action_mode=adaln
-bash scripts/train_physcanvas.sh --dry-run
+bash scripts/train_raymap_vace.sh --dry-run
+bash scripts/train_vector_adaln.sh --dry-run --set model.action_mode=adaln
+bash scripts/train_motionimage.sh --dry-run
 ```
 
 For a raw-data preflight before building caches:
 
 ```bash
-bash scripts/train_vace.sh --validate-only --set data.cache.mode=off
+bash scripts/train_raymap_vace.sh --validate-only --set data.cache.mode=off
 ```
 
-Preflight checks all 825 original WAN tensor keys/shapes and reads one training and validation sample. It does not allocate the full trainable model or prove GPU memory feasibility. The other two default entry scripts require their condition caches; validate those after the cache steps below.
+Preflight checks all 825 original WAN tensor keys/shapes and reads one training and validation sample. It does not allocate the full trainable model or prove GPU memory feasibility. All three online entries support `--validate-only`; `_cached` entries require their corresponding caches first.
 
 ## VAE caches
+
+VAE caching accelerates training by avoiding online VAE encoding and is useful for quick validation. **Precomputed latents cannot receive newly sampled pixel-space image augmentations during training**; four cache variants only preserve four fixed augmentation outcomes. Use the entries without `_cached` for online random image augmentation followed by VAE encoding.
 
 The three comparison recipes share a deterministic plan of RGB windows and augmentations. Build **one VACE-format RGB/action cache** first, then derive the two alternative action-condition caches:
 
 ```bash
 # All windows; four fixed augmentation variants per window; ranks shard the work.
 NUM_PROCESSES=8 bash scripts/cache_latents.sh \
-  --config configs/train/adjust_bottle_cached_100k.yaml --variants 4
+  --config configs/train/adjust_bottle_raymap_vace_cached_100k.yaml --variants 4
 
 # Joint vectors at the exact recorded frame IDs.
 NUM_PROCESSES=8 bash scripts/cache_conditions.sh \
-  --config configs/train/adjust_bottle_vector_cached_100k.yaml
+  --config configs/train/adjust_bottle_vector_adaln_cached_100k.yaml
 
 # Grayscale FK mesh canvases -> VAE motion latents.
 NUM_PROCESSES=8 bash scripts/cache_conditions.sh \
-  --config configs/train/adjust_bottle_physcanvas_cached_100k.yaml
+  --config configs/train/adjust_bottle_motionimage_cached_100k.yaml
 ```
 
 Cache construction can take hours and requires much more disk than the compressed HDF5 dataset. Each rank processes a disjoint subset. A manifest is marked `complete` only after coverage checks. Resume the same build with the same configuration to reuse verified files; do not run duplicate builders against one cache root.
@@ -127,33 +130,40 @@ Four versions fix four sampling/augmentation outcomes per window. **They never c
 
 Cache readers verify the preprocessing fingerprint, source identities, condition signature, tensor shape and dtype. Optional `data.cache.verify_checksum=true` checks each tensor file on read. Changing the source path, preprocessing code, view layout, resolution, sampling, or augmentation requires a matching cache, usually a new root and rebuild. Do not reuse unrelated private caches with this public checkout.
 
-For online encoding, use `configs/train/robotwin_vace.yaml`, `robotwin_action.yaml`, or `robotwin_physcanvas.yaml`, overriding `data.base_path` with the five directory paths and keeping `data.cache.mode=off`. Online and cached runs must use equivalent sampling plans for a numerical comparison. `scripts/validate_latent_cache.py` is specifically a VACE online/replay-versus-cache comparison utility.
+Online and cached entries are listed below. Use equivalent sampling plans for numerical comparisons. `scripts/validate_latent_cache.py` compares Raymap + VACE online replay against cached latents.
 
 ## Three training recipes
 
-After the required manifests are complete:
+Each method has online and cached entries. Complete the cache-building steps before using a cached entry.
+
+| Method | Online encoding (random image augmentation) | VAE cache |
+|---|---|---|
+| Raymap + VACE | `train_raymap_vace.sh` | `train_raymap_vace_cached.sh` |
+| MotionImage + Patch Addition | `train_motionimage.sh` | `train_motionimage_cached.sh` |
+| vector + AdaLN | `train_vector_adaln.sh` | `train_vector_adaln_cached.sh` |
 
 ```bash
-# 1. Original WAN + action image / rays + VACE
-NUM_PROCESSES=16 bash scripts/train_vace.sh
+# No VAE cache: read raw HDF5, augment and encode online.
+NUM_PROCESSES=16 bash scripts/train_raymap_vace.sh
+NUM_PROCESSES=16 bash scripts/train_motionimage.sh
+NUM_PROCESSES=16 bash scripts/train_vector_adaln.sh
 
-# 2. Original WAN + joint14 vectors + both injection mechanisms
-NUM_PROCESSES=16 bash scripts/train_vector.sh
-
-# 3. Original WAN + PhysCanvas-style mesh action representation
-NUM_PROCESSES=16 bash scripts/train_physcanvas.sh
+# VAE cache: read precomputed latents.
+NUM_PROCESSES=16 bash scripts/train_raymap_vace_cached.sh
+NUM_PROCESSES=16 bash scripts/train_motionimage_cached.sh
+NUM_PROCESSES=16 bash scripts/train_vector_adaln_cached.sh
 ```
 
 Each command starts a separate job; run them sequentially if they share one machine. Defaults: **100,000 optimizer updates, checkpoint every 5,000 updates, 500 distributed validation batches after each checkpoint**, BF16, learning rate 1e-5, gradient accumulation 1, and ZeRO-2. VACE trains DiT and VACE; vector/mesh recipes train DiT including their new action projections. These configurations do not impose a scheduler wall-clock limit: set any cluster time limit in your own launcher.
 
-**Optimizer CPU/NVMe offload is disabled and rejected.** Supplied `configs/distributed/zero{0,1,2}.yaml` select ZeRO stages, with no optimizer offload. ZeRO-0 replicates optimizer state and may exceed memory even when ZeRO-2 fits. Do not infer memory fit from a successful dry-run.
+Use `configs/distributed/zero{0,1,2}.yaml` to select the ZeRO stage.
 
 ```bash
 NUM_PROCESSES=8 ACCELERATE_CONFIG=configs/distributed/zero1.yaml \
-  bash scripts/train_vector.sh --set model.action_mode=cross_attn
+  bash scripts/train_vector_adaln.sh --set model.action_mode=cross_attn
 
 # Disposable short run: use a distinct output label; this still loads the full model.
-NUM_PROCESSES=16 bash scripts/train_vace.sh \
+NUM_PROCESSES=16 bash scripts/train_raymap_vace.sh \
   --set training.max_steps=20 --set training.save_final_checkpoint=false \
   --set output.task=vace-smoke-20steps
 ```
@@ -166,7 +176,7 @@ YAML inheritance is relative to the YAML file; repeated `--config` overlays merg
 
 | Setting / overlay | Options or effect |
 |---|---|
-| `model.action_mode` | `cross_attn`, `adaln`, `cross_attn_and_adaln` |
+| `model.action_mode` | `adaln` (default), `cross_attn`, `cross_attn_and_adaln` |
 | `configs/variants/integrated_aug.yaml` | Sparse history + random temporal stride + probabilistic spherical context blur |
 | `sparse_history.yaml` | Fixed sparse history |
 | `temporal_stride.yaml` | Random temporal stride |
@@ -179,7 +189,9 @@ YAML inheritance is relative to the YAML file; repeated `--config` overlays merg
 | `vace_vae_rays.yaml` | 144 channels: VAE-encoded action and ray images |
 | `no_view_embedding.yaml` | Disable VACE camera-view embeddings |
 
-Example: `bash scripts/train.sh --config configs/train/robotwin_vace.yaml --config configs/variants/single_head.yaml --dry-run`. The mesh renderer currently supports the three-camera recipe; single-camera alternatives are for VACE/vector paths. Changing cache-related settings requires regeneration. A checkpoint from one condition architecture cannot be loaded into a different architecture.
+Example: `bash scripts/train.sh --config configs/train/robotwin_raymap_vace.yaml --config configs/variants/single_head.yaml --dry-run`. The mesh renderer currently supports the three-camera recipe; single-camera alternatives are for VACE/vector paths. Changing cache-related settings requires regeneration. A checkpoint from one condition architecture cannot be loaded into a different architecture.
+
+Legacy Python imports, family names and config paths remain as compatibility entries; new configs use `raymap_vace`, `motionimage`, and `vector`. To load an older dual-injection vector checkpoint, explicitly set `model.action_mode=cross_attn_and_adaln`. Renaming updates preprocessing fingerprints, so rebuild old caches under a new root.
 
 ## Outputs, checkpoints and evaluation
 
@@ -217,7 +229,7 @@ Enable timing with `--set profiling.enabled=true`. This writes CUDA-event/host s
 Generate one held-out action-conditioned chunk from a matching trained checkpoint:
 
 ```bash
-bash scripts/infer.sh --config configs/train/adjust_bottle_cached_100k.yaml \
+bash scripts/infer.sh --config configs/train/adjust_bottle_raymap_vace_cached_100k.yaml \
   --set model.checkpoint=/absolute/path/to/checkpoints/step-00005000.safetensors \
   --index 0 --steps 50 --seed 42 --output /your/results/vace-chunk.mp4
 ```
@@ -228,7 +240,7 @@ Use the vector or mesh YAML for its checkpoint. The inference entry point reads 
 
 ```text
 configs/             # portable base, method, augmentation and distributed YAMLs
-scripts/             # three training entries, download/cache/verification/inference
+scripts/             # online/cached entries for three methods, download/cache/verification/inference
 wovrplus/models/     # WAN, VACE, vector conditioning, mesh patch embedding, VAE/T5
 wovrplus/data/       # RoboTwin, projection, FK mesh renderer, cache builders/readers
 wovrplus/pipelines/  # method-specific input preparation and generation
@@ -245,17 +257,23 @@ python -m pytest tests -q
 
 Tests include action-mode output/gradient equivalence against reference fixtures, additive mesh injection, VACE variants, cache equivalence with small fixtures, independent rank RNG, distributed metric accounting, optimizer-offload rejection, and training beyond 501 updates. They are not a substitute for full-scale accelerator testing. See [release validation](docs/validation.md) for the checks actually run on this release.
 
-## Scope and acknowledgements
+## License and citation
 
-This release focuses on action-conditioned world-model training. It does not include unrelated image/text-to-video training examples, cloud credentials, internal job launchers, pretrained experiment checkpoints, or policy evaluation infrastructure. Data, downloaded assets, caches and outputs belong outside Git.
-
-Code is licensed under **Apache-2.0**. The public adjust_bottle dataset is **CC BY 4.0**. We thank [DiffSynth-Studio](https://github.com/modelscope/DiffSynth-Studio), [WAN](https://github.com/Wan-Video/Wan2.2), [RoboTwin](https://github.com/RoboTwin-Platform/RoboTwin), [RLinf](https://github.com/RLinf/RLinf), and [PhysCanvas](https://github.com/OpenPhoenix-Team/PhysCanvas). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The README organization is inspired by PhysCanvas; method scope and results described here belong to this implementation.
+This project is licensed under **[Apache-2.0](LICENSE)**. If you find it useful for your research, please consider citing our papers:
 
 ```bibtex
-@misc{youmo4452026wovrplustraining,
-  author = {youmo445},
-  title = {WoVR+ Action-Conditioned World Model Training},
-  year = {2026},
-  url = {https://github.com/youmo445/WoVR_Plus_wm_training}
+@article{jiang2026wovr,
+  title={WoVR: World Models as Reliable Simulators for Post-Training VLA Policies with RL},
+  author={Zhennan Jiang and Shangqing Zhou and Yutong Jiang and Zefang Huang and Mingjie Wei and Yuhui Chen and Tianxing Zhou and Zhen Guo and Hao Lin and Quanlu Zhang and Yu Wang and Haoran Li and Chao Yu and Dongbin Zhao},
+  year={2026},
+  journal={arXiv preprint arXiv:2602.13977},
+}
+
+@article{zhou2026wovrworldmodelreliable,
+  title={WoVR+: World Model as Reliable Simulator for Versatile VLA Policy Optimization with RL},
+  author={Shangqing Zhou and Zhennan Jiang and Ning Ma and Xin Fu and Yupeng Zheng and Shuai Tian and Huangrui Li and Jiahao Liu and Chao Yu and Zhongpu Xia and Haoran Li and Dongbin Zhao},
+  year={2026},
+  journal={arXiv preprint arXiv:2610.17922},
+  eprint={2610.17922}
 }
 ```

@@ -1,0 +1,6 @@
+extends: adjust_bottle_raymap_vace_100k.yaml
+data:
+  cache:
+    mode: read
+output:
+  task: adjust-bottle-raymap-vace-cache4-100k-save5k

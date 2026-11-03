@@ -1,6 +1,2 @@
-extends: robotwin_vace.yaml
-model:
-  family: wan_physcanvas
-  use_text: true
-training:
-  trainable: [dit]
+# Compatibility alias.
+extends: robotwin_motionimage.yaml

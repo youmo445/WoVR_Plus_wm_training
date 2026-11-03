@@ -1,0 +1,1 @@
+extends: [../base.yaml, ../model/raymap_vace.yaml, ../variants/integrated_aug.yaml]

@@ -1,0 +1,31 @@
+# Full adjust_bottle task: five directories, 500 episodes, all windows x 4 variants.
+# Launch with configs/distributed/zero2.yaml; optimizer CPU offload stays disabled.
+extends: robotwin_raymap_vace.yaml
+model:
+  checkpoint: null
+  vace_random_init: false
+data:
+  base_path:
+    - ${WOVR_ASSET_ROOT}/datasets/adjust_bottle/adjust_bottle
+    - ${WOVR_ASSET_ROOT}/datasets/adjust_bottle/adjust_bottle_1
+    - ${WOVR_ASSET_ROOT}/datasets/adjust_bottle/adjust_bottle_2
+    - ${WOVR_ASSET_ROOT}/datasets/adjust_bottle/adjust_bottle_3
+    - ${WOVR_ASSET_ROOT}/datasets/adjust_bottle/adjust_bottle_4
+  kwargs:
+    train_episodes_per_task: 80
+    val_episodes_per_task: 20
+    val_tail_episodes_per_task: 20
+  cache:
+    mode: 'off'
+    root: ${WOVR_ASSET_ROOT}/cache/adjust-bottle-raymap-vace4
+training:
+  max_steps: 100000             # Optimizer updates, not epochs or microbatches.
+  save_steps: 5000             # All trained weights go under output/checkpoints/.
+  eval_steps: 500              # Reshuffle validation after each checkpoint.
+  save_final_checkpoint: true
+  log_steps: 50
+profiling:
+  enabled: false               # Keep full-run overhead low; TensorBoard loss remains enabled.
+output:
+  root: ${WOVR_ASSET_ROOT}/outputs
+  task: null

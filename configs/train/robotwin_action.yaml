@@ -1,1 +1,2 @@
-extends: [../base.yaml, ../model/wan_action.yaml, ../variants/integrated_aug.yaml]
+# Compatibility alias.
+extends: robotwin_vector.yaml
