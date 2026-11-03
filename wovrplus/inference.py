@@ -16,7 +16,7 @@ def main():
     p.add_argument("--output", required=True)
     p.add_argument("--device", default="cuda")
     args = p.parse_args()
-    cfg = resolve_config(args.config or [ROOT / "configs/train/robotwin_vace.yaml"], args.set)
+    cfg = resolve_config(args.config or [ROOT / "configs/train/robotwin_raymap_vace.yaml"], args.set)
     if args.dry_run:
         print(json.dumps(cfg, indent=2))
         return
@@ -36,9 +36,9 @@ def main():
     dataset = build_dataset(cfg, "val")
     sample = dataset[args.index]
     pipeline = WorldModelPipeline
-    if cfg["model"]["family"] == "wan_physcanvas":
-        from wovrplus.pipelines.physcanvas import PhysCanvasPipeline
-        pipeline = PhysCanvasPipeline
+    if cfg["model"]["family"] == "motionimage":
+        from wovrplus.pipelines.motionimage import MotionImagePipeline
+        pipeline = MotionImagePipeline
     pipe = pipeline.from_config(cfg).to(args.device).eval()
     video = pipe.generate(
         sample,

@@ -1,0 +1,6 @@
+extends: robotwin_raymap_vace.yaml
+model:
+  family: motionimage
+  use_text: true
+training:
+  trainable: [dit]

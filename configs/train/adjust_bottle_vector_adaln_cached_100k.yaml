@@ -1,0 +1,10 @@
+extends: adjust_bottle_vector_adaln_100k.yaml
+data:
+  cache:
+    mode: read
+condition_cache:
+  kind: vector
+  root: ${WOVR_ASSET_ROOT}/cache/adjust-bottle-vector
+  allow_partial_for_smoke: false
+output:
+  task: adjust-bottle-vector-adaln-cache4-100k-save5k

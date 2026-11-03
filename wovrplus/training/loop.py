@@ -42,7 +42,7 @@ def save_run_config(args):
     from wovrplus.config import ROOT
 
     cfg = getattr(args, "resolved_config", {})
-    family = cfg.get("model", {}).get("family", "wan_vace")
+    family = cfg.get("model", {}).get("family", "raymap_vace")
     sources = sorted(
         p
         for pattern in (
@@ -64,7 +64,7 @@ def save_run_config(args):
             if args.init_checkpoint_path
             else (
                 "original_wan_dit_with_vace_from_dit"
-                if family == "wan_vace" and not cfg.get("model", {}).get("vace_random_init", False)
+                if family == "raymap_vace" and not cfg.get("model", {}).get("vace_random_init", False)
                 else "original_wan_dit_with_new_condition_projections"
             )
         ),

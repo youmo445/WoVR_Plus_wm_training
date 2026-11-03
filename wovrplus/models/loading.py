@@ -5,7 +5,7 @@ import torch
 from safetensors.torch import load_file
 from .utils import init_weights_on_device, load_state_dict
 from .wan_dit import WanModel
-from .action import WanActionModel
+from .vector import WanVectorModel
 from .wan_vae import WanVideoVAE38
 from .wan_text_encoder import WanTextEncoder
 
@@ -40,12 +40,12 @@ def load_wan(model_dir, model_config, dtype=torch.bfloat16):
                 raise ValueError(f"Duplicate parameter {k} in WAN shards")
             state[k] = v.to(dtype)
     cls, extra = WanModel, {}
-    if model_config["family"] == "wan_action":
-        cls = WanActionModel
+    if model_config["family"] == "vector":
+        cls = WanVectorModel
         extra = {k: model_config[k] for k in ("action_dim", "action_mode", "use_text")}
-    if model_config["family"] == "wan_physcanvas":
-        from .physcanvas import WanPhysCanvasModel
-        cls = WanPhysCanvasModel
+    if model_config["family"] == "motionimage":
+        from .motionimage import WanMotionImageModel
+        cls = WanMotionImageModel
     with init_weights_on_device():
         dit = cls(**WAN_5B, **extra)
     result = dit.load_state_dict(state, strict=False, assign=True)
@@ -55,7 +55,7 @@ def load_wan(model_dir, model_config, dtype=torch.bfloat16):
     unexpected = [
         k
         for k in result.unexpected_keys
-        if not (cls is WanActionModel and not extra["use_text"] and k.startswith("text_embedding."))
+        if not (cls is WanVectorModel and not extra["use_text"] and k.startswith("text_embedding."))
     ]
     if set(result.missing_keys) != set(allowed_missing) or unexpected:
         raise ValueError(
@@ -71,7 +71,7 @@ def load_wan(model_dir, model_config, dtype=torch.bfloat16):
     dit.to(dtype=dtype)
     vae = load_vae(root, dtype)
     text_encoder = None
-    if model_config["family"] == "wan_vace" or model_config["use_text"]:
+    if model_config["family"] == "raymap_vace" or model_config["use_text"]:
         state = load_state_dict(str(root / "models_t5_umt5-xxl-enc-bf16.pth"), torch_dtype=dtype)
         with init_weights_on_device():
             text_encoder = WanTextEncoder()

@@ -40,11 +40,11 @@ class SampleAdapter(torch.utils.data.Dataset):
     def __getitem__(self, index):
         sample = dict(self.dataset[index])
         sample.setdefault("prompt", "")
-        if self.cfg["model"]["family"] == "wan_action":
+        if self.cfg["model"]["family"] == "vector":
             if "action" not in sample:
                 if not self.cfg["data"]["name"].startswith("robotwin"):
                     raise ValueError(
-                        "This dataset does not expose raw actions; use a RoboTwin adapter for wan_action"
+                        "This dataset does not expose raw actions; use a RoboTwin adapter for vector"
                     )
                 import h5py
                 from .robotwin import _read_action_components
@@ -69,15 +69,15 @@ class SampleAdapter(torch.utils.data.Dataset):
             for key in ("ray_map_o", "ray_map_d"):
                 if isinstance(sample.get(key), np.ndarray):
                     sample[key] = torch.from_numpy(sample[key])
-        if self.cfg["model"]["family"] == "wan_vace" and self.cfg["model"]["vace_in_dim"] == 54:
+        if self.cfg["model"]["family"] == "raymap_vace" and self.cfg["model"]["vace_in_dim"] == 54:
             # The legacy raw-ray variant uses one ray per latent slot; stack4 uses all four.
             for key in ("ray_map_o", "ray_map_d"):
                 value = sample.get(key)
                 if torch.is_tensor(value) and value.shape[0] == 12:
                     sample[key] = value[:3]
-        if self.cfg["model"]["family"] == "wan_physcanvas":
+        if self.cfg["model"]["family"] == "motionimage":
             if not hasattr(self, "motion_renderer"):
-                from .physcanvas_renderer import RoboTwinMeshRenderer
+                from .motionimage_renderer import RoboTwinMeshRenderer
                 settings = self.cfg.get("condition_cache", {})
                 self.motion_renderer = RoboTwinMeshRenderer(
                     self.cfg["data"]["fk_config"], self.cfg["data"]["resize_to"],
@@ -107,7 +107,7 @@ def build_dataset(cfg, split):
     defaults = dict(data["sampling"])
     defaults.update(context_length=data["context_frames"], resize_to=data["resize_to"],
                     view_mode=data["view_mode"], single_camera=data["single_camera"],
-                    output_raymap=cfg["model"]["family"] == "wan_vace" and cfg["model"]["vace_in_dim"] != 48,
+                    output_raymap=cfg["model"]["family"] == "raymap_vace" and cfg["model"]["vace_in_dim"] != 48,
                     raymap_mode="image" if cfg["model"]["vace_in_dim"] == 144 else "latent")
     if name != "robotwin_endpose":
         defaults["fk_config_path"] = data["fk_config"]

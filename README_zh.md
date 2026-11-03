@@ -4,7 +4,7 @@
 
 [English](README.md) · [公开数据集](https://huggingface.co/datasets/jzndd/RoboTwin_adjust_bottle_For_ACWM_Training) · [WoVR+ 项目](https://youmo445.github.io/WoVR_Plus.github.io/) · [Apache-2.0](LICENSE)
 
-本仓库在相同 RoboTwin 观测上提供三类动作表征与注入方式：动作投影图 + VACE、关节向量 + 注意力/调制、PhysCanvas 风格的网格运动图。包含训练、验证集片段生成、可复现 VAE 缓存、分布式优化和 loss 诊断，不依赖同级 DiffSynth-Studio 目录。
+本仓库在相同 RoboTwin 观测上提供三类动作表征与注入方式：Raymap + VACE、MotionImage + Patch Addition、vector + AdaLN。包含训练、验证集片段生成、可复现 VAE 缓存、分布式优化和 loss 诊断，不依赖同级 DiffSynth-Studio 目录。
 
 ## 目录
 
@@ -19,19 +19,21 @@
 - [Loss 指标与性能分析](#loss-指标与性能分析)
 - [推理](#推理)
 - [代码结构与测试](#代码结构与测试)
-- [范围、许可与致谢](#范围许可与致谢)
+- [许可与引用](#许可与引用)
 
 ## 支持的方法
 
-| 方法 | 动作表征 | 注入方式 | 运行脚本 |
+| 方法 | 动作表征 | 注入方式 | 运行脚本（在线 VAE） |
 |---|---|---|---|
-| **WAN + VACE** | 经正向运动学投影的彩色动作图，可附加标定相机射线 | VACE 条件分支，Transformer 块由 WAN DiT 初始化 | `scripts/train_vace.sh` |
-| **WAN + 关节向量** | 14 维：左臂 6 + 左夹爪 + 右臂 6 + 右夹爪 | `cross_attn`、`adaln` 或 `cross_attn_and_adaln` | `scripts/train_vector.sh` |
-| **WAN + PhysCanvas 风格运动图** | 把机器人 link 网格经 FK 投影到灰度画布，再由 WAN VAE 编码 | 独立 Conv3d motion patch embedding 与 RGB latent patch embedding **相加** | `scripts/train_physcanvas.sh` |
+| **Raymap + VACE（default）** | 经正向运动学投影的彩色动作图与标定相机射线 | VACE 条件分支，由 WAN DiT 初始化 | `scripts/train_raymap_vace.sh` |
+| **MotionImage + Patch Addition**（参考 [PhysCanvas](https://zebinx.github.io/PhysCanvas_HomePage/)） | FK 投影的灰度机器人网格图，经 WAN VAE 编码 | 独立 Conv3d 动作 patch embedding 与视频 patch embedding 相加 | `scripts/train_motionimage.sh` |
+| **vector + AdaLN**（参考 [WoVR](https://wovr-rlinf.github.io/)） | 14 维关节目标：左臂 6 + 左夹爪 + 右臂 6 + 右夹爪 | 动作投影后参与 AdaLN 调制；也支持可选 cross-attention 或二者结合 | `scripts/train_vector_adaln.sh` |
 
-三类方法均从 **`Wan-AI/Wan2.2-TI2V-5B` 原始权重**开始，新动作投影层单独初始化。PhysCanvas 风格分支仅将其动作表征与注入思路适配到 RoboTwin，不等同于完整复现该项目的视觉、触觉、状态世界模型或策略评估系统。
+三类方法均从 **`Wan-AI/Wan2.2-TI2V-5B` 原始权重**开始。
 
-默认采用三视角、5 帧历史、8 帧未来，每个相机缩放为 256×320。**先在 RGB 空间纵向拼接三路相机，再经过 VAE**，拼接后为 768×320。该流程不是“每视角独立 VAE 编码后拼 latent”；两者在视角边界附近并不等价。模型比较、缓存生成与推理应保持相同布局。
+1. 默认采用三视角、5 帧历史、8 帧未来，每个相机缩放为 256×320。**先在 RGB 空间纵向拼接三路相机，再经过 VAE**，拼接后为 768×320。
+2. Raymap 和 MotionImage 需要相机内参和外参。
+3. PS：MotionImage + Patch Addition 参考 [PhysCanvas](https://zebinx.github.io/PhysCanvas_HomePage/)，只参考动作表征和注入方式，不涉及触觉等。
 
 ## 安装
 
@@ -46,7 +48,6 @@ source .venv/bin/activate
 pip install -e '.[distributed,test]'
 ```
 
-若存在 `/usr/local/PPU_SDK/envsetup.sh`，运行脚本会加载 PPU SDK。所有脚本默认使用当前激活环境中的 `python`，也可设置 `PYTHON=/path/to/python`。卡数由 `NUM_PROCESSES` 控制。`--dry-run` 仅检查配置，不代表显存足够；完整 5B 模型并非任意单卡都能训练。
 
 ## 下载数据与资产
 
@@ -90,35 +91,37 @@ $WOVR_ASSET_ROOT/
 不读取大权重或数据，先检查三组配置：
 
 ```bash
-bash scripts/train_vace.sh --dry-run
-bash scripts/train_vector.sh --dry-run --set model.action_mode=adaln
-bash scripts/train_physcanvas.sh --dry-run
+bash scripts/train_raymap_vace.sh --dry-run
+bash scripts/train_vector_adaln.sh --dry-run --set model.action_mode=adaln
+bash scripts/train_motionimage.sh --dry-run
 ```
 
 缓存生成前，可读取原始数据进行预检查：
 
 ```bash
-bash scripts/train_vace.sh --validate-only --set data.cache.mode=off
+bash scripts/train_raymap_vace.sh --validate-only --set data.cache.mode=off
 ```
 
-预检查核对原始 WAN 的全部 825 个参数键/形状，并读取一个训练和一个验证样本，不分配完整可训练模型。因此它不验证显存是否足够。向量与网格默认脚本需要对应条件缓存，应在以下步骤完成后再执行 `--validate-only`。
+预检查核对原始 WAN 的全部 825 个参数键/形状，并读取一个训练和一个验证样本，不分配完整可训练模型。因此它不验证显存是否足够。三个在线入口均可直接执行 `--validate-only`；带 `_cached` 的入口需要先完成对应缓存。
 
 ## VAE 缓存
+
+VAE 缓存用于加速训练，省去训练过程中的 VAE 编码耗时，适合快速验证。**预计算 latent 后，训练时无法再重新采样像素级图像增强**；四个缓存版本只是预先固定的增强结果。如果需要在线随机图像增强，请使用不带 `_cached` 的训练入口，实时执行增强和 VAE 编码。
 
 三种对照方法共享 RGB 窗口和增强计划。先构建一份 **VACE 格式 RGB/动作缓存**，再构建向量与网格条件缓存：
 
 ```bash
 # 遍历全部窗口，每窗口四个固定增强版本；不同 rank 分片并行处理。
 NUM_PROCESSES=8 bash scripts/cache_latents.sh \
-  --config configs/train/adjust_bottle_cached_100k.yaml --variants 4
+  --config configs/train/adjust_bottle_raymap_vace_cached_100k.yaml --variants 4
 
 # 读取共享计划中精确 frame_ids 对应的关节向量。
 NUM_PROCESSES=8 bash scripts/cache_conditions.sh \
-  --config configs/train/adjust_bottle_vector_cached_100k.yaml
+  --config configs/train/adjust_bottle_vector_adaln_cached_100k.yaml
 
 # FK 网格灰度画布 -> VAE motion latent。
 NUM_PROCESSES=8 bash scripts/cache_conditions.sh \
-  --config configs/train/adjust_bottle_physcanvas_cached_100k.yaml
+  --config configs/train/adjust_bottle_motionimage_cached_100k.yaml
 ```
 
 全窗口缓存可能需要数小时及显著大于原始压缩数据的存储空间。每个 rank 处理互不重叠的分片，只有完成覆盖核验才写入 `complete` manifest。中断后可用原配置恢复并复用已核验文件，不要同时启动两个写同一目录的 builder。
@@ -127,33 +130,40 @@ NUM_PROCESSES=8 bash scripts/cache_conditions.sh \
 
 读取器检查预处理代码指纹、源文件身份、条件签名、张量形状和 dtype。`data.cache.verify_checksum=true` 可额外逐次核验 SHA256。修改路径、预处理代码、视角布局、分辨率、采样或增强后，需要对应的新缓存，通常应指定新的缓存目录重新构建。不要直接复用其他代码版本的内部缓存。
 
-在线编码可使用 `configs/train/robotwin_vace.yaml`、`robotwin_action.yaml` 或 `robotwin_physcanvas.yaml`，将 `data.base_path` 指向五个目录并保持 `data.cache.mode=off`。做在线/缓存数值对照时，必须使用相同采样计划。`scripts/validate_latent_cache.py` 专门用于 VACE 在线重放与缓存的一致性检查。
+在线和缓存入口见下表。做在线/缓存数值对照时，必须使用相同采样计划。`scripts/validate_latent_cache.py` 用于 Raymap + VACE 在线重放与缓存的一致性检查。
 
 ## 三组训练入口
 
-相关缓存完整后运行：
+每种方法均提供在线编码与 VAE cache 两个入口；缓存版本需先完成上面的构建步骤。
+
+| 方法 | 在线编码（支持随机图像增强） | VAE cache |
+|---|---|---|
+| Raymap + VACE | `train_raymap_vace.sh` | `train_raymap_vace_cached.sh` |
+| MotionImage + Patch Addition | `train_motionimage.sh` | `train_motionimage_cached.sh` |
+| vector + AdaLN | `train_vector_adaln.sh` | `train_vector_adaln_cached.sh` |
 
 ```bash
-# 1. 原始 WAN + 动作投影图/射线 + VACE
-NUM_PROCESSES=16 bash scripts/train_vace.sh
+# 不使用 VAE cache：从原始 HDF5 读取，在线增强和编码。
+NUM_PROCESSES=16 bash scripts/train_raymap_vace.sh
+NUM_PROCESSES=16 bash scripts/train_motionimage.sh
+NUM_PROCESSES=16 bash scripts/train_vector_adaln.sh
 
-# 2. 原始 WAN + joint14 向量 + AdaLN 与 cross-attention
-NUM_PROCESSES=16 bash scripts/train_vector.sh
-
-# 3. 原始 WAN + PhysCanvas 风格网格动作图
-NUM_PROCESSES=16 bash scripts/train_physcanvas.sh
+# 使用 VAE cache：直接读取预计算 latent。
+NUM_PROCESSES=16 bash scripts/train_raymap_vace_cached.sh
+NUM_PROCESSES=16 bash scripts/train_motionimage_cached.sh
+NUM_PROCESSES=16 bash scripts/train_vector_adaln_cached.sh
 ```
 
 每条命令各自启动一个训练任务，共用一台机器时请顺序执行。默认配置：**100,000 次 optimizer update，每 5,000 次保存，随后验证 500 个分布式 batch**，BF16、学习率 1e-5、梯度累积 1、ZeRO-2。VACE 更新 DiT 和 VACE；向量/网格更新 DiT 及其动作投影层。脚本不设置集群墙钟时限，由外部调度器配置。
 
-**Optimizer CPU/NVMe offload 默认关闭，并在启动时明确拒绝启用。** 可用 `configs/distributed/zero{0,1,2}.yaml` 选择 ZeRO stage。ZeRO-0 复制优化器状态，ZeRO-2 能运行不意味着 ZeRO-0 也能容纳。
+可用 `configs/distributed/zero{0,1,2}.yaml` 选择 ZeRO stage。
 
 ```bash
 NUM_PROCESSES=8 ACCELERATE_CONFIG=configs/distributed/zero1.yaml \
-  bash scripts/train_vector.sh --set model.action_mode=cross_attn
+  bash scripts/train_vector_adaln.sh --set model.action_mode=cross_attn
 
 # 独立短测标签；仍然需要加载完整模型。
-NUM_PROCESSES=16 bash scripts/train_vace.sh \
+NUM_PROCESSES=16 bash scripts/train_raymap_vace.sh \
   --set training.max_steps=20 --set training.save_final_checkpoint=false \
   --set output.task=vace-smoke-20steps
 ```
@@ -166,7 +176,7 @@ YAML 的 `extends` 相对于配置文件解析；重复 `--config` 按顺序覆�
 
 | 参数/配置 | 含义 |
 |---|---|
-| `model.action_mode` | `cross_attn` / `adaln` / `cross_attn_and_adaln` |
+| `model.action_mode` | `adaln`（默认）/ `cross_attn` / `cross_attn_and_adaln` |
 | `integrated_aug.yaml` | 稀疏历史 + 随机时间步长 + 概率性球形历史模糊 |
 | `sparse_history.yaml` | 固定稀疏历史 |
 | `temporal_stride.yaml` | 随机时间步长 |
@@ -182,11 +192,13 @@ YAML 的 `extends` 相对于配置文件解析；重复 `--config` 按顺序覆�
 变体文件位于 `configs/variants/`。例如：
 
 ```bash
-bash scripts/train.sh --config configs/train/robotwin_vace.yaml \
+bash scripts/train.sh --config configs/train/robotwin_raymap_vace.yaml \
   --config configs/variants/single_head.yaml --dry-run
 ```
 
 网格 renderer 当前支持三相机流程；单相机变体用于 VACE/向量分支。涉及缓存的变体修改后应重新生成缓存。不同条件结构的 checkpoint 不能互相加载。
+
+旧 Python 导入路径、方法名和配置文件保留兼容入口；新配置使用 `raymap_vace`、`motionimage`、`vector`。加载旧的双注入向量 checkpoint 时，应显式设置 `model.action_mode=cross_attn_and_adaln`。预处理指纹随命名更新，旧缓存需要在新目录重建。
 
 ## 输出、权重与验证
 
@@ -226,7 +238,7 @@ tensorboard --logdir "$WOVR_ASSET_ROOT/outputs" --port 6006
 使用匹配的训练权重，在一个验证样本上生成动作条件视频片段：
 
 ```bash
-bash scripts/infer.sh --config configs/train/adjust_bottle_cached_100k.yaml \
+bash scripts/infer.sh --config configs/train/adjust_bottle_raymap_vace_cached_100k.yaml \
   --set model.checkpoint=/absolute/path/to/checkpoints/step-00005000.safetensors \
   --index 0 --steps 50 --seed 42 --output /your/results/vace-chunk.mp4
 ```
@@ -237,7 +249,7 @@ bash scripts/infer.sh --config configs/train/adjust_bottle_cached_100k.yaml \
 
 ```text
 configs/             # 基础、方法、增强、分布式配置
-scripts/             # 三个训练入口，以及下载/缓存/验证/推理
+scripts/             # 三种方法的在线/缓存入口，以及下载/缓存/验证/推理
 wovrplus/models/     # WAN、VACE、向量条件、网格 patch embedding、VAE/T5
 wovrplus/data/       # RoboTwin、投影、FK 网格 renderer、缓存
 wovrplus/pipelines/  # 各方法的输入处理和生成
@@ -254,17 +266,23 @@ python -m pytest tests -q
 
 测试覆盖动作注入模式与参考实现的前向/梯度一致性、网格相加注入、VACE 变体、小样本缓存、rank 随机流隔离、指标计数、offload 拒绝以及超过 501 步的训练循环。小模型测试不能替代完整规模显存与性能验证。本次实际执行内容见 [docs/validation.md](docs/validation.md)。
 
-## 范围、许可与致谢
+## 许可与引用
 
-本仓库聚焦动作条件世界模型训练，不包含无关文生图/文生视频训练样例、云凭证、内部调度脚本、实验权重或完整策略评估系统。数据、缓存、大权重和输出均应位于 Git 仓库之外。
-
-代码为 **Apache-2.0**，公开 adjust_bottle 数据为 **CC BY 4.0**。感谢 [DiffSynth-Studio](https://github.com/modelscope/DiffSynth-Studio)、[WAN](https://github.com/Wan-Video/Wan2.2)、[RoboTwin](https://github.com/RoboTwin-Platform/RoboTwin)、[RLinf](https://github.com/RLinf/RLinf)、[PhysCanvas](https://github.com/OpenPhoenix-Team/PhysCanvas)。第三方声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。文档组织参考 PhysCanvas，本文所述实现范围与验证结果仅对应本仓库。
+本项目采用 **[Apache-2.0](LICENSE)** 许可。如果本项目对你的研究有帮助，欢迎引用我们的论文：
 
 ```bibtex
-@misc{youmo4452026wovrplustraining,
-  author = {youmo445},
-  title = {WoVR+ Action-Conditioned World Model Training},
-  year = {2026},
-  url = {https://github.com/youmo445/WoVR_Plus_wm_training}
+@article{jiang2026wovr,
+  title={WoVR: World Models as Reliable Simulators for Post-Training VLA Policies with RL},
+  author={Zhennan Jiang and Shangqing Zhou and Yutong Jiang and Zefang Huang and Mingjie Wei and Yuhui Chen and Tianxing Zhou and Zhen Guo and Hao Lin and Quanlu Zhang and Yu Wang and Haoran Li and Chao Yu and Dongbin Zhao},
+  year={2026},
+  journal={arXiv preprint arXiv:2602.13977},
+}
+
+@article{zhou2026wovrworldmodelreliable,
+  title={WoVR+: World Model as Reliable Simulator for Versatile VLA Policy Optimization with RL},
+  author={Shangqing Zhou and Zhennan Jiang and Ning Ma and Xin Fu and Yupeng Zheng and Shuai Tian and Huangrui Li and Jiahao Liu and Chao Yu and Zhongpu Xia and Haoran Li and Dongbin Zhao},
+  year={2026},
+  journal={arXiv preprint arXiv:2610.17922},
+  eprint={2610.17922}
 }
 ```

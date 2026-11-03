@@ -11,9 +11,9 @@ class WorldModelTrainingModule(torch.nn.Module):
         super().__init__()
         self.cfg = cfg
         pipeline = WorldModelPipeline
-        if cfg["model"]["family"] == "wan_physcanvas":
-            from wovrplus.pipelines.physcanvas import PhysCanvasPipeline
-            pipeline = PhysCanvasPipeline
+        if cfg["model"]["family"] == "motionimage":
+            from wovrplus.pipelines.motionimage import MotionImagePipeline
+            pipeline = MotionImagePipeline
         self.pipe = pipe or pipeline.from_config(cfg)
         self.pipe.scheduler.set_timesteps(1000, training=True)
         trainable = cfg["training"]["trainable"]

@@ -89,7 +89,7 @@ class LatentCacheTests(unittest.TestCase):
             (weights / "Wan2.2_VAE.pth").write_bytes(b"vae")
             source = root / "source.hdf5"
             source.write_bytes(b"original")
-            cfg = resolve_config([ROOT / "configs/train/robotwin_vace.yaml"])
+            cfg = resolve_config([ROOT / "configs/train/robotwin_raymap_vace.yaml"])
             cfg["model"]["model_dir"] = str(weights)
             cfg["data"]["cache"].update(root=str(root), mode="read", verify_checksum=True)
             tensors = {

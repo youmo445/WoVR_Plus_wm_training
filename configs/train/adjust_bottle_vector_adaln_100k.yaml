@@ -1,0 +1,9 @@
+extends: adjust_bottle_100k.yaml
+model:
+  family: vector
+  action_mode: adaln
+  use_text: false
+training:
+  trainable: [dit]
+output:
+  task: adjust-bottle-vector-adaln-online-100k-save5k

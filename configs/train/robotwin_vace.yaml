@@ -1,1 +1,2 @@
-extends: [../base.yaml, ../model/wan_vace.yaml, ../variants/integrated_aug.yaml]
+# Compatibility alias.
+extends: robotwin_raymap_vace.yaml

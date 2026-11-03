@@ -57,13 +57,17 @@ def override(cfg, value):
 
 def validate(cfg):
     m, d, t = cfg["model"], cfg["data"], cfg["training"]
+    aliases = {"wan_vace": "raymap_vace", "wan_action": "vector", "wan_physcanvas": "motionimage"}
+    m["family"] = aliases.get(m["family"], m["family"])
+    if cfg.get("condition_cache", {}).get("kind") == "physcanvas":
+        cfg["condition_cache"]["kind"] = "motionimage"
     if d.get("cache", {}).get("mode", "off") not in ("off", "read", "replay"):
         raise ValueError("data.cache.mode must be off, read or replay")
-    if m["family"] not in ("wan_vace", "wan_action", "wan_physcanvas"):
-        raise ValueError("model.family must be wan_vace, wan_action or wan_physcanvas")
+    if m["family"] not in ("raymap_vace", "vector", "motionimage"):
+        raise ValueError("model.family must be raymap_vace, vector or motionimage")
     if m["dtype"] not in ("bfloat16", "float32", "float16"):
         raise ValueError("Unsupported model.dtype")
-    from .models.action import normalize_action_mode
+    from .models.vector import normalize_action_mode
 
     m["action_mode"] = normalize_action_mode(m["action_mode"])
     if m["vace_in_dim"] not in (48, 54, 72, 144):
@@ -80,19 +84,19 @@ def validate(cfg):
         raise ValueError("Invalid trainable component")
     if m["action_dim"] <= 0:
         raise ValueError("action_dim must be positive")
-    if m["family"] == "wan_action" and "vace" in t["trainable"]:
-        raise ValueError("wan_action cannot train a VACE branch")
-    if m["family"] == "wan_vace" and "action" in t["trainable"]:
-        raise ValueError("wan_vace cannot train direct action projections")
-    if m["family"] == "wan_vace" and m["view_embeddings"] not in (0, 1, 3):
+    if m["family"] == "vector" and "vace" in t["trainable"]:
+        raise ValueError("vector cannot train a VACE branch")
+    if m["family"] == "raymap_vace" and "action" in t["trainable"]:
+        raise ValueError("raymap_vace cannot train direct action projections")
+    if m["family"] == "raymap_vace" and m["view_embeddings"] not in (0, 1, 3):
         raise ValueError("view_embeddings must be 0,1,3")
-    if m["family"] == "wan_vace" and d["view_mode"] == "single" and m["view_embeddings"] > 1:
+    if m["family"] == "raymap_vace" and d["view_mode"] == "single" and m["view_embeddings"] > 1:
         raise ValueError("Single view requires at most one view embedding")
     if d["name"] not in ("robotwin", "robotwin_endpose"):
         raise ValueError("This release supports robotwin and robotwin_endpose datasets")
-    if m["family"] == "wan_physcanvas":
+    if m["family"] == "motionimage":
         if t["trainable"] != ["dit"] or not m["use_text"]:
-            raise ValueError("PhysCanvas trains DiT plus replay embedding and uses text context")
+            raise ValueError("MotionImage trains DiT plus replay embedding and uses text context")
     if cfg.get("condition_cache", {}).get("allow_partial_for_smoke") and not 0 < t["max_steps"] <= 3:
         raise ValueError("Partial condition cache is restricted to <=3-step smoke tests")
     return cfg
@@ -133,9 +137,11 @@ def run_path(cfg):
     stamp = os.environ.get("WOVR_RUN_TIMESTAMP") or datetime.now(
         ZoneInfo("Asia/Shanghai")
     ).strftime("%Y%m%d-%H%M%S")
+    injection = {"vector": m["action_mode"], "motionimage": "patch_addition",
+                 "raymap_vace": "vace" + str(m["vace_in_dim"])}[m["family"]]
     task = (
         o["task"]
-        or f"{d['name']}-{m['family']}-{m['action_mode'] if m['family']=='wan_action' else 'vace'+str(m['vace_in_dim'])}-{d['view_mode']}-{d['sampling']['sample_mode']}-blur{d['sampling']['context_sphere_blur_prob']}-c{d['context_frames']}h{d['horizon_frames']}-{'_'.join(t['trainable'])}-lr{t['learning_rate']:g}"
+        or f"{d['name']}-{m['family']}-{injection}-{d['view_mode']}-{d['sampling']['sample_mode']}-blur{d['sampling']['context_sphere_blur_prob']}-c{d['context_frames']}h{d['horizon_frames']}-{'_'.join(t['trainable'])}-lr{t['learning_rate']:g}"
     )
     task = re.sub(r"[^a-zA-Z0-9_.-]+", "_", task)
     if d.get("cache", {}).get("mode", "off") != "off":

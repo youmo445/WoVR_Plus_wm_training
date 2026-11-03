@@ -43,8 +43,8 @@ def build(cfg: dict, limit: int = 0) -> None:
     if distributed:
         dist.barrier()
     try:
-        if kind == "physcanvas":
-            from .physcanvas_renderer import RoboTwinMeshRenderer
+        if kind == "motionimage":
+            from .motionimage_renderer import RoboTwinMeshRenderer
             from wovrplus.models.loading import load_vae
             renderer = RoboTwinMeshRenderer(cfg["data"]["fk_config"], cfg["data"]["resize_to"], cfg["condition_cache"]["background"], cfg["condition_cache"]["gripper_gray"])
             device = torch.device("cuda", int(os.environ.get("LOCAL_RANK", "0")))
@@ -61,7 +61,7 @@ def build(cfg: dict, limit: int = 0) -> None:
             signature = hashlib.sha256(json.dumps({"spec": spec, "assets": assets}, sort_keys=True).encode()).hexdigest()
             unique = {}
             for record in source["records"]:
-                key = motion_key(record["meta"]) if kind == "physcanvas" else episode_key(record["meta"]["path"])
+                key = motion_key(record["meta"]) if kind == "motionimage" else episode_key(record["meta"]["path"])
                 unique.setdefault(key, record)
             selected = list(unique)[:limit or None]
             if (folder / "manifest.json").exists():

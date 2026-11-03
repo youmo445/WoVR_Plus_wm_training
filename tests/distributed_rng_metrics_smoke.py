@@ -49,7 +49,7 @@ args = argparse.Namespace(output_path=str(output), save_steps=6, eval_steps=3,
                           gradient_accumulation_steps=2, seed=42, init_checkpoint_path=None,
                           find_unused_parameters=False, dataset_num_workers=0,
                           learning_rate=.001, weight_decay=0.)
-cfg = dict(model=dict(family="wan_action"), data=dict(context_frames=5, horizon_frames=8),
+cfg = dict(model=dict(family="vector"), data=dict(context_frames=5, horizon_frames=8),
            training=dict(trainable=["dit"], seed=42, gradient_checkpointing=False,
                          gradient_checkpointing_offload=False, low_noise_offset=1))
 save_run_config(args)

@@ -1,17 +1,2 @@
-# PhysCanvas action representation only: FK mesh projection -> WAN VAE ->
-# independent Conv3d replay_embedding summed with WAN patch_embedding.
-extends: adjust_bottle_cached_100k.yaml
-model:
-  family: wan_physcanvas
-  use_text: true
-  checkpoint: null
-training:
-  trainable: [dit]
-condition_cache:
-  kind: physcanvas
-  root: ${WOVR_ASSET_ROOT}/cache/adjust-bottle-physcanvas
-  allow_partial_for_smoke: false
-  background: 190             # PhysCanvas gray motion canvas
-  gripper_gray: 55            # projected link6/7/8 mesh silhouettes
-output:
-  task: adjust-bottle-cache4-wan-physcanvas-mesh-c5h8-lr1e-5-zero2-100k-save5k
+# Compatibility alias.
+extends: adjust_bottle_motionimage_cached_100k.yaml

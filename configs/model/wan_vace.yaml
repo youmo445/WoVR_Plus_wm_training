@@ -1,5 +1,2 @@
-model:
-  family: wan_vace
-training:
-  trainable: [dit, vace]
-  low_noise_offset: 1
+# Compatibility alias.
+extends: raymap_vace.yaml

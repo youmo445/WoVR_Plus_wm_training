@@ -1,13 +1,13 @@
 # Assets are outside this checkout. Override paths explicitly for other machines.
 model:
-  family: wan_vace                 # wan_vace | wan_action | wan_physcanvas
+  family: raymap_vace                 # raymap_vace | vector | motionimage
   model_dir: ${WOVR_ASSET_ROOT}/models/Wan2.2-TI2V-5B
   tokenizer_path: ${WOVR_ASSET_ROOT}/models/Wan2.2-TI2V-5B/google/umt5-xxl
   checkpoint: null                 # null: original WAN; otherwise matching WoVR+/RLinf weights
   dtype: bfloat16                  # bfloat16 | float32 | float16
-  action_mode: cross_attn_and_adaln # cross_attn | adaln | cross_attn_and_adaln (aliases: crossattn/modulation/both)
+  action_mode: adaln # cross_attn | adaln | cross_attn_and_adaln (aliases: crossattn/modulation/both)
   action_dim: 14                   # RoboTwin joint14: left6 + gripper + right6 + gripper
-  use_text: false                  # wan_action only: false matches RLinf; wan_vace always uses text
+  use_text: false                  # vector only: false matches RLinf; raymap_vace always uses text
   vace_in_dim: 72                  # 48 action image only; 54 raw rays; 72 stack4 rays; 144 VAE rays
   view_embeddings: 3              # 0 disables; 3 for stacked three-camera VACE
   vace_random_init: false          # false copies VACE transformer blocks from WAN DiT
@@ -40,7 +40,7 @@ data:
   kwargs: {}                     # adapter-specific constructor arguments (no silent filtering)
   cache:
     mode: 'off'                   # off | read (preencoded) | replay (same plan, online VAE baseline)
-    root: ${WOVR_ASSET_ROOT}/cache/adjust-bottle-rgb-vace4
+    root: ${WOVR_ASSET_ROOT}/cache/adjust-bottle-raymap-vace4
     verify_sources: true          # validate source metadata once; cached __getitem__ never opens HDF5
     verify_checksum: false        # optional SHA256 per read; shape/dtype/signature always checked
   train_kwargs: {}

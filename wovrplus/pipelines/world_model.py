@@ -6,7 +6,7 @@ from .base import BasePipeline
 from .model_fn import model_fn_wan
 from .vace_conditions import VACEConditionEncoder
 from wovrplus.models.loading import load_wan, load_world_checkpoint
-from wovrplus.models.vace import VaceWanModel
+from wovrplus.models.raymap_vace import RaymapVACEModel
 from wovrplus.schedulers.flow_match import FlowMatchScheduler
 from wovrplus.training.loss import world_model_loss
 
@@ -36,8 +36,8 @@ class WorldModelPipeline(BasePipeline):
         dtype = getattr(torch, m["dtype"])
         dit, vae, text_encoder = load_wan(m["model_dir"], m, dtype)
         vace = None
-        if m["family"] == "wan_vace":
-            vace = VaceWanModel(
+        if m["family"] == "raymap_vace":
+            vace = RaymapVACEModel(
                 vace_in_dim=m["vace_in_dim"], view_embedding_num_views=m["view_embeddings"]
             ).to(dtype)
             if not m["vace_random_init"]:
@@ -125,7 +125,7 @@ class WorldModelPipeline(BasePipeline):
             )
         else:
             if "action" not in sample:
-                raise ValueError("Dataset must provide action tensors for wan_action")
+                raise ValueError("Dataset must provide action tensors for vector")
             prepared["action"] = sample["action"]
         return prepared
 

@@ -61,7 +61,7 @@ def model_fn_wan(
         if action_mod is not None:
             t = t + action_mod
     elif action is not None:
-        raise ValueError("Use a WanActionModel for raw action injection")
+        raise ValueError("Use a WanVectorModel for raw action injection")
     if context is None:
         # Preserve the modulation-only RLinf path: a single zero context token.
         context = latents.new_zeros(b, 1, dit.dim)
@@ -69,10 +69,10 @@ def model_fn_wan(
     patches = dit.patchify(latents)
     if hasattr(dit, "replay_embedding"):
         if replay_latents is None or replay_latents.shape != latents.shape:
-            raise ValueError("PhysCanvas requires aligned 48-channel replay latents")
+            raise ValueError("MotionImage requires aligned 48-channel replay latents")
         patches = patches + dit.replay_embedding(replay_latents)
     elif replay_latents is not None:
-        raise ValueError("Replay conditions require WanPhysCanvasModel")
+        raise ValueError("Replay conditions require WanMotionImageModel")
     x = rearrange(patches, "b c f h w -> b (f h w) c").contiguous()
     freqs = (
         torch.cat(

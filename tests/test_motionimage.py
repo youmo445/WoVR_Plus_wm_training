@@ -1,16 +1,16 @@
 import unittest
 import torch
 from torch.nn import functional as F
-from wovrplus.models.physcanvas import WanPhysCanvasModel
+from wovrplus.models.motionimage import WanMotionImageModel
 from wovrplus.pipelines.model_fn import model_fn_wan
 from wovrplus.data.condition_cache import motion_key
 from test_models import SMALL
 
 
-class PhysCanvasTests(unittest.TestCase):
+class MotionImageTests(unittest.TestCase):
     def test_additive_replay_patch_equation_and_gradient(self):
         torch.manual_seed(7)
-        model = WanPhysCanvasModel(**SMALL)
+        model = WanMotionImageModel(**SMALL)
         x = torch.randn(1, 48, 4, 4, 4)
         motion = torch.randn_like(x)
         context = torch.randn(1, 4, 32)

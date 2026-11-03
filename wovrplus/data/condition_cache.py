@@ -25,7 +25,7 @@ def episode_key(path: str) -> str:
 def source_manifest(cfg: dict, split: str):
     """Only family differs; validate data, VAE and all encoder source hashes."""
     original = deepcopy(cfg)
-    original["model"]["family"] = "wan_vace"
+    original["model"]["family"] = "raymap_vace"
     if original["model"]["vace_in_dim"] != 72:
         raise ValueError("Component reuse is audited only for the original VACE72 cache")
     return load_manifest(original, split)
@@ -34,8 +34,8 @@ def source_manifest(cfg: dict, split: str):
 def condition_spec(cfg: dict, manifest: dict) -> dict:
     settings = {k: v for k, v in cfg["condition_cache"].items() if k not in ("root", "allow_partial_for_smoke")}
     names = ["wovrplus/data/condition_cache.py", "wovrplus/data/build_condition_cache.py"]
-    if settings["kind"] == "physcanvas":
-        names += ["wovrplus/data/physcanvas_renderer.py"]
+    if settings["kind"] == "motionimage":
+        names += ["wovrplus/data/motionimage_renderer.py"]
     return dict(schema=1, source_signature=manifest["signature"], settings=settings,
                 code_sha256={name: digest_file(ROOT / name) for name in names})
 
@@ -68,7 +68,7 @@ class ConditionCacheDataset(torch.utils.data.Dataset):
         self.verify_checksum = cfg["data"]["cache"].get("verify_checksum", False)
 
     def key(self, record):
-        return motion_key(record["meta"]) if self.kind == "physcanvas" else episode_key(record["meta"]["path"])
+        return motion_key(record["meta"]) if self.kind == "motionimage" else episode_key(record["meta"]["path"])
 
     def __len__(self):
         return len(self.records)
@@ -120,7 +120,7 @@ def build_dataset(cfg, split):
     if cfg.get("condition_cache"):
         if cfg["data"]["cache"]["mode"] != "read":
             raise ValueError("Condition cache training requires data.cache.mode=read")
-        expected = {"wan_action": "vector", "wan_physcanvas": "physcanvas"}
+        expected = {"vector": "vector", "motionimage": "motionimage"}
         if expected.get(cfg["model"]["family"]) != cfg["condition_cache"]["kind"]:
             raise ValueError("Condition representation does not match model family")
         if cfg["data"]["action_stats"]:
