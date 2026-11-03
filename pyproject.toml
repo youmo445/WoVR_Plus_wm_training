@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wovrplus-world-model"
+version = "0.2.0"
+license = "Apache-2.0"
+authors = [{name = "youmo445"}]
+description = "WAN + VACE and WAN + action-conditioned world models"
+requires-python = ">=3.10"
+dependencies = ["torch>=2.4", "torchvision", "einops", "safetensors", "transformers", "accelerate", "PyYAML", "numpy", "Pillow", "scipy", "h5py", "imageio[ffmpeg]", "pandas", "tqdm", "ftfy", "regex", "tensorboard", "opencv-python-headless", "huggingface_hub>=0.27"]
+
+[project.optional-dependencies]
+distributed = ["deepspeed"]
+test = ["pytest"]
+
+[project.scripts]
+wovrplus-train = "wovrplus.training.cli:main"
+wovrplus-infer = "wovrplus.inference:main"
+
+[tool.setuptools.packages.find]
+include = ["wovrplus*"]

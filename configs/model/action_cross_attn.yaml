@@ -1,0 +1,2 @@
+model:
+  action_mode: cross_attn

@@ -1,0 +1,16 @@
+# Same RGB latent windows/augmentation variants as VACE; actions are joint14
+# vectors selected at the exact frame_ids recorded in the immutable cache.
+extends: adjust_bottle_cached_100k.yaml
+model:
+  family: wan_action
+  action_mode: cross_attn_and_adaln
+  use_text: false
+  checkpoint: null
+training:
+  trainable: [dit]
+condition_cache:
+  kind: vector
+  root: ${WOVR_ASSET_ROOT}/cache/adjust-bottle-vector
+  allow_partial_for_smoke: false
+output:
+  task: adjust-bottle-cache4-wan-joint14-adaln-crossattn-c5h8-lr1e-5-zero2-100k-save5k

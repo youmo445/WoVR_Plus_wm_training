@@ -1,0 +1,1 @@
+extends: [../base.yaml, ../model/wan_action.yaml, ../variants/integrated_aug.yaml]

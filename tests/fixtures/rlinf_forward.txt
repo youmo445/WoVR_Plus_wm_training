@@ -1,0 +1,423 @@
+def model_fn_wan_video(
+    dit: WanModel,
+    motion_controller: WanMotionControllerModel = None,
+    vace: VaceWanModel = None,
+    vap: MotWanModel = None,
+    animate_adapter: WanAnimateAdapter = None,
+    latents: torch.Tensor = None,
+    timestep: torch.Tensor = None,
+    context: torch.Tensor = None,
+    clip_feature: Optional[torch.Tensor] = None,
+    y: Optional[torch.Tensor] = None,
+    action = None,
+    idx = None,
+    reference_latents = None,
+    vace_context = None,
+    vace_scale = 1.0,
+    audio_embeds: Optional[torch.Tensor] = None,
+    motion_latents: Optional[torch.Tensor] = None,
+    s2v_pose_latents: Optional[torch.Tensor] = None,
+    vap_hidden_state = None,
+    vap_clip_feature = None,
+    context_vap = None,
+    drop_motion_frames: bool = True,
+    tea_cache: TeaCache = None,
+    use_unified_sequence_parallel: bool = False,
+    motion_bucket_id: Optional[torch.Tensor] = None,
+    pose_latents=None,
+    face_pixel_values=None,
+    longcat_latents=None,
+    sliding_window_size: Optional[int] = None,
+    sliding_window_stride: Optional[int] = None,
+    cfg_merge: bool = False,
+    use_gradient_checkpointing: bool = False,
+    use_gradient_checkpointing_offload: bool = False,
+    control_camera_latents_input = None,
+    fuse_vae_embedding_in_latents: bool = False,
+    **kwargs,
+):
+    # Debug switch priority:
+    # 1) explicit call arg: model_fn_wan_video(..., debug=True/False)
+    # 2) env var WAN_DEBUG=1/true/yes/on
+    debug = kwargs.get("debug", None)
+    if debug is None:
+        debug = str(os.environ.get("WAN_DEBUG", "0")).lower() in {"1", "true", "yes", "on"}
+    else:
+        debug = bool(debug)
+
+    def debug_print(*args, **kwargs_):
+        if debug:
+            print(*args, **kwargs_)
+
+    bs_1 = True if len(action.shape) == 2 else False
+
+    if bs_1:
+        T = action.shape[0]
+    else:
+        T = action.shape[1]
+
+    debug_print("action shape is ", action.shape)
+
+    # bs_1 is True means in the training process, the action is a single frame
+    # bs_1 is False means in the inference process, the action is a sequence of frames
+
+    # action shape is [B, T, action_dim] or [T, action_dim]
+    # For action_mlp2 we group every 4 frames, so pad T to
+    # the nearest multiple of 4 when needed.
+
+    
+
+    if sliding_window_size is not None and sliding_window_stride is not None:
+        model_kwargs = dict(
+            dit=dit,
+            motion_controller=motion_controller,
+            vace=vace,
+            latents=latents,
+            timestep=timestep,
+            context=context,
+            clip_feature=clip_feature,
+            y=y,
+            reference_latents=reference_latents,
+            vace_context=vace_context,
+            vace_scale=vace_scale,
+            tea_cache=tea_cache,
+            use_unified_sequence_parallel=use_unified_sequence_parallel,
+            motion_bucket_id=motion_bucket_id,
+        )
+        return TemporalTiler_BCTHW().run(
+            model_fn_wan_video,
+            sliding_window_size, sliding_window_stride,
+            latents.device, latents.dtype,
+            model_kwargs=model_kwargs,
+            tensor_names=["latents", "y"],
+            batch_size=2 if cfg_merge else 1
+        )
+        
+    # wan2.2 s2v
+    if audio_embeds is not None:
+        return model_fn_wans2v(
+            dit=dit,
+            latents=latents,
+            timestep=timestep,
+            context=context,
+            audio_embeds=audio_embeds,
+            motion_latents=motion_latents,
+            s2v_pose_latents=s2v_pose_latents,
+            drop_motion_frames=drop_motion_frames,
+            use_gradient_checkpointing_offload=use_gradient_checkpointing_offload,
+            use_gradient_checkpointing=use_gradient_checkpointing,
+            use_unified_sequence_parallel=use_unified_sequence_parallel,
+        )
+
+    if use_unified_sequence_parallel:
+        import torch.distributed as dist
+        from xfuser.core.distributed import (get_sequence_parallel_rank,
+                                            get_sequence_parallel_world_size,
+                                            get_sp_group)
+
+    # Motion Controller
+    if motion_bucket_id is not None and motion_controller is not None:
+        t_mod = t_mod + motion_controller(motion_bucket_id).unflatten(1, (6, dit.dim))
+
+    analysis_collector = kwargs.get("analysis_collector", None)
+    x = latents
+    # Image Embedding
+    
+    if y is not None and dit.require_vae_embedding:
+        x = torch.cat([x, y], dim=1)
+    if clip_feature is not None and dit.require_clip_embedding:
+        clip_embdding = dit.img_emb(clip_feature)
+        if context is not None:
+            context = torch.cat([clip_embdding, context], dim=1)
+        else:
+            context = clip_embdding
+
+    action_raw = action.clone()
+    if dit.enable_action_crossattn:
+        if isinstance(action, np.ndarray):
+            action = torch.from_numpy(action)
+        action = action.to(dtype=x.dtype, device=x.device)
+        if action.dim() == 2:
+            action = action.unsqueeze(0)
+        # [B, T, action_dim] -> [B, T, dim]
+        action_emb = dit.action_mlp1(action)
+        if context is not None:
+            context = torch.cat([context, action_emb], dim=1)
+        else:
+            context = action_emb
+
+    if context is None and dit.action_mode == "modulation":
+        context = torch.zeros(x.shape[0], 1, dit.dim, dtype=x.dtype, device=x.device)
+
+    assert torch.isfinite(latents).all(), "latents has NaN/Inf"
+    assert torch.isfinite(timestep).all(), "timestep has NaN/Inf"
+    if y is not None:
+        assert torch.isfinite(y).all(), "y has NaN/Inf"
+    if clip_feature is not None:
+        assert torch.isfinite(clip_feature).all(), "clip_feature has NaN/Inf"
+    # Camera control
+    x = dit.patchify(x, control_camera_latents_input)
+
+    action_emb = None
+    if dit.enable_action_modulation:
+        # FOR EVALUATION
+        if not bs_1:
+            action = action_raw
+            if isinstance(action, np.ndarray):
+                action = torch.from_numpy(action)
+
+            action = action.to(dtype=context.dtype, device=context.device)
+            B, T, D = action.shape
+
+            padding_length = (4 - (T % 4)) % 4
+            # use first action padding
+            # first_action = action[:, 0:1, :]  # (B, 1, D)
+            # padding_action = first_action.expand(B, padding_length, D)
+
+            # use zero action padding
+            if padding_length > 0:
+                padding_action = torch.zeros(B, padding_length, D, dtype=action.dtype, device=action.device)
+                action = torch.cat([padding_action, action], dim=1)
+            B, T4, D4 = action.shape
+            action = action.reshape(B, T4 // 4, D4 * 4)
+            action_emb = dit.action_mlp2(action)
+        # FOR TRAINING
+        elif bs_1:
+            action = action_raw
+            if isinstance(action, np.ndarray):
+                action = torch.from_numpy(action)
+            action = action.to(dtype=context.dtype, device=context.device)
+            T, D = action.shape
+            padding_length = (4 - (T % 4)) % 4
+            # use first action to padding
+            # first_action = action[0:1, :]  # (1, D)
+            # padding_action = first_action.expand(padding_length, D)
+            # use zero action padding
+            if padding_length > 0:
+                padding_action = torch.zeros(padding_length, D, dtype=action.dtype, device=action.device)
+                action = torch.cat([padding_action, action], dim=0)
+            T4, D4 = action.shape
+            action = action.reshape(T4 // 4, D4 * 4)
+            action_emb = dit.action_mlp2(action)
+
+    if action_emb is not None:
+        assert torch.isfinite(action_emb).all(), "action_emb has NaN/Inf"
+
+    if dit.seperated_timestep and fuse_vae_embedding_in_latents and dit.one_frame_condition:
+        raise NotImplementedError("one_frame_condition is not supported")
+    elif dit.seperated_timestep and fuse_vae_embedding_in_latents and dit.five_frame_condition:
+        # action_mlp2 outputs one token per 4-frame group.
+        # To align action tokens with timestep tokens, each temporal token needs to be
+        # expanded across all spatial patch positions per frame:
+        #   spatial_expand = (latent_h / patch_h) * (latent_w / patch_w)
+        patch_h, patch_w = dit.patch_size[1], dit.patch_size[2]
+        assert latents.shape[3] % patch_h == 0 and latents.shape[4] % patch_w == 0, (
+            f"Latent spatial size ({latents.shape[3]}, {latents.shape[4]}) must be divisible "
+            f"by patch size ({patch_h}, {patch_w})."
+        )
+        spatial_expand = (latents.shape[3] // patch_h) * (latents.shape[4] // patch_w)
+
+        if not bs_1:
+            timestep = torch.concat([
+                torch.zeros((2, latents.shape[3] * latents.shape[4] // 4), dtype=latents.dtype, device=latents.device),
+                torch.ones((latents.shape[2] - 2, latents.shape[3] * latents.shape[4] // 4), dtype=latents.dtype, device=latents.device) * timestep
+            ]).flatten()
+            t = dit.time_embedding(sinusoidal_embedding_1d(dit.freq_dim, timestep).unsqueeze(0)).repeat(B, 1, 1)
+            if dit.enable_action_modulation:
+                action_emb = action_emb.unsqueeze(2).repeat(1, 1, spatial_expand, 1).flatten(1, 2)
+                t = t + action_emb
+            t_mod = dit.time_projection(t).unflatten(2, (6, dit.dim))
+        elif bs_1:
+            timestep = torch.concat([
+                torch.zeros((2, latents.shape[3] * latents.shape[4] // 4), dtype=latents.dtype, device=latents.device),
+                torch.ones((latents.shape[2] - 2, latents.shape[3] * latents.shape[4] // 4), dtype=latents.dtype, device=latents.device) * timestep
+            ]).flatten()
+            t = dit.time_embedding(sinusoidal_embedding_1d(dit.freq_dim, timestep).unsqueeze(0))
+
+            debug_print("t shape is ", t.shape)
+            debug_print("dit.freq_dim is ", dit.freq_dim)
+            debug_print("timestep shape is ", timestep.shape)
+            debug_print("latents shape is ", latents.shape)
+
+            if dit.enable_action_modulation:
+                action_emb = action_emb.unsqueeze(0) # [1, T, 3072]
+                action_emb = action_emb.unsqueeze(2).repeat(1, 1, spatial_expand, 1).flatten(1,2)
+                t = t + action_emb
+            t_mod = dit.time_projection(t).unflatten(2, (6, dit.dim))
+    else:
+        t = dit.time_embedding(sinusoidal_embedding_1d(dit.freq_dim, timestep))
+        t_mod = dit.time_projection(t).unflatten(1, (6, dit.dim))
+    if analysis_collector is not None:
+        analysis_collector.update("t_mod", t_mod)
+
+    # Animate
+    if pose_latents is not None and face_pixel_values is not None:
+        x, motion_vec = animate_adapter.after_patch_embedding(x, pose_latents, face_pixel_values)
+    
+    # Patchify
+    f, h, w = x.shape[2:]
+    x = rearrange(x, 'b c f h w -> b (f h w) c').contiguous()
+    x_input_for_residual = x
+    if analysis_collector is not None:
+        x_input_for_residual = x.clone()
+
+    # Reference image
+    if reference_latents is not None:
+        if len(reference_latents.shape) == 5:
+            reference_latents = reference_latents[:, :, 0]
+        reference_latents = dit.ref_conv(reference_latents).flatten(2).transpose(1, 2)
+        x = torch.concat([reference_latents, x], dim=1)
+        f += 1
+    
+    if dit.one_frame_condition:
+        raise NotImplementedError("已弃用，请迁移至[five_frame_condition]")
+        freqs = torch.cat([
+            dit.freqs[0][:f].view(f, 1, 1, -1).expand(f, h, w, -1),
+            dit.freqs[1][:h].view(1, h, 1, -1).expand(f, h, w, -1),
+            dit.freqs[2][:w].view(1, 1, w, -1).expand(f, h, w, -1)
+        ], dim=-1).reshape(f * h * w, 1, -1).to(x.device)
+    elif dit.five_frame_condition:
+        freqs = torch.cat([
+            dit.freqs[0][:f].view(f, 1, 1, -1).expand(f, h, w, -1),
+            dit.freqs[1][:h].view(1, h, 1, -1).expand(f, h, w, -1),
+            dit.freqs[2][:w].view(1, 1, w, -1).expand(f, h, w, -1)
+        ], dim=-1).reshape(f * h * w, 1, -1).to(x.device)
+
+    assert torch.isfinite(x).all(), "x before transformer blocks has NaN/Inf"
+    assert torch.isfinite(context).all(), "context before transformer blocks has NaN/Inf"
+    assert torch.isfinite(t_mod).all(), "t_mod before transformer blocks has NaN/Inf"
+
+
+    # VAP 
+    if vap is not None:
+        # hidden state
+        x_vap = vap_hidden_state
+        x_vap = vap.patchify(x_vap)
+        x_vap = rearrange(x_vap, 'b c f h w -> b (f h w) c').contiguous()
+        # Timestep
+        clean_timestep = torch.ones(timestep.shape, device=timestep.device).to(timestep.dtype)
+        t = vap.time_embedding(sinusoidal_embedding_1d(vap.freq_dim, clean_timestep))
+        t_mod_vap = vap.time_projection(t).unflatten(1, (6, vap.dim))
+
+        # rope
+        freqs_vap = vap.compute_freqs_mot(f,h,w).to(x.device)
+
+        # context
+        vap_clip_embedding = vap.img_emb(vap_clip_feature)
+        context_vap = vap.text_embedding(context_vap)
+        context_vap = torch.cat([vap_clip_embedding, context_vap], dim=1)
+    
+    # TeaCache
+    if tea_cache is not None:
+        tea_cache_update = tea_cache.check(dit, x, t_mod)
+    else:
+        tea_cache_update = False
+        
+    if vace_context is not None:
+        vace_hints = vace(
+            x, vace_context, context, t_mod, freqs,
+            use_gradient_checkpointing=use_gradient_checkpointing,
+            use_gradient_checkpointing_offload=use_gradient_checkpointing_offload
+        )
+    
+    # blocks
+    if use_unified_sequence_parallel:
+        debug_print('use unified sequence parallel')
+        if dist.is_initialized() and dist.get_world_size() > 1:
+            chunks = torch.chunk(x, get_sequence_parallel_world_size(), dim=1)
+            pad_shape = chunks[0].shape[1] - chunks[-1].shape[1]
+            chunks = [torch.nn.functional.pad(chunk, (0, 0, 0, chunks[0].shape[1]-chunk.shape[1]), value=0) for chunk in chunks]
+            x = chunks[get_sequence_parallel_rank()]
+    if tea_cache_update:
+        debug_print('use tea cache to skip computation')
+        x = tea_cache.update(x)
+    else:
+        # print('normal forward')
+        def create_custom_forward(module):
+            def custom_forward(*inputs):
+                return module(*inputs)
+            return custom_forward
+        
+        def create_custom_forward_vap(block, vap):
+            def custom_forward(*inputs):
+                return vap(block, *inputs)
+            return custom_forward
+        for block_id, block in enumerate(dit.blocks):
+            t_layer_start = time.time()
+            # Block
+            if vap is not None and block_id in vap.mot_layers_mapping:
+                if use_gradient_checkpointing_offload:
+                    with torch.autograd.graph.save_on_cpu():
+                        x, x_vap = torch.utils.checkpoint.checkpoint(
+                            create_custom_forward_vap(block, vap),
+                            x, context, t_mod, freqs, x_vap, context_vap, t_mod_vap, freqs_vap, block_id,
+                            use_reentrant=False,
+                        )
+                elif use_gradient_checkpointing:
+                    x, x_vap = torch.utils.checkpoint.checkpoint(
+                        create_custom_forward_vap(block, vap),
+                        x, context, t_mod, freqs, x_vap, context_vap, t_mod_vap, freqs_vap, block_id,
+                        use_reentrant=False,
+                    )
+                else:
+                    x, x_vap = vap(block, x, context, t_mod, freqs, x_vap, context_vap, t_mod_vap, freqs_vap, block_id)
+            else:
+                if use_gradient_checkpointing_offload:
+                    # print(f'=== gradient checkpointing offload block forward, block id: {block_id} ===')
+                    with torch.autograd.graph.save_on_cpu():
+                        x = torch.utils.checkpoint.checkpoint(
+                            create_custom_forward(block),
+                            x, context, t_mod, freqs,
+                            use_reentrant=False,
+                        )
+                elif use_gradient_checkpointing:
+                    # print(f'=== gradient checkpointing block forward, block id: {block_id} ===')
+                    x = torch.utils.checkpoint.checkpoint(
+                        create_custom_forward(block),
+                        x, context, t_mod, freqs,
+                        use_reentrant=False,
+                    )
+                else:
+                    # print(f'normal block forward, block id: {block_id}')
+                    if dit.has_action_mode:
+                        x = block(x, context, t_mod, freqs)
+                    elif dit.I2V:
+                        raise NotImplementedError("已弃用，请迁移至[TI2V]")
+            
+            # VACE
+            if vace_context is not None and block_id in vace.vace_layers_mapping:
+                current_vace_hint = vace_hints[vace.vace_layers_mapping[block_id]]
+                if use_unified_sequence_parallel and dist.is_initialized() and dist.get_world_size() > 1:
+                    current_vace_hint = torch.chunk(current_vace_hint, get_sequence_parallel_world_size(), dim=1)[get_sequence_parallel_rank()]
+                    current_vace_hint = torch.nn.functional.pad(current_vace_hint, (0, 0, 0, chunks[0].shape[1] - current_vace_hint.shape[1]), value=0)
+                x = x + current_vace_hint * vace_scale
+            
+            # Animate
+            if pose_latents is not None and face_pixel_values is not None:
+                x = animate_adapter.after_transformer_block(block_id, x, motion_vec)
+
+            t_layer_end = time.time()
+            if (t_layer_end - t_layer_start) > 0.5:
+                debug_print(f"  [ModelFn] Block {block_id} slow: {t_layer_end - t_layer_start:.4f}s")
+        if tea_cache is not None:
+            tea_cache.store(x)
+    if analysis_collector is not None:
+        debug_print(f'x_input_for_residual shape: {x_input_for_residual.shape}, x shape: {x.shape}')
+        model_residual = x - x_input_for_residual
+        analysis_collector.update("model_residual", model_residual)
+        analysis_collector.update("hidden_states_before_head", x)
+    
+    x = dit.head(x, t)
+
+    if use_unified_sequence_parallel:
+        if dist.is_initialized() and dist.get_world_size() > 1:
+            x = get_sp_group().all_gather(x, dim=1)
+            x = x[:, :-pad_shape] if pad_shape > 0 else x
+    # Remove reference latents
+    if reference_latents is not None:
+        x = x[:, reference_latents.shape[1]:]
+        f -= 1
+    
+    
+    x = dit.unpatchify(x, (f, h, w))
+    return x

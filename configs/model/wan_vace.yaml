@@ -1,0 +1,5 @@
+model:
+  family: wan_vace
+training:
+  trainable: [dit, vace]
+  low_noise_offset: 1

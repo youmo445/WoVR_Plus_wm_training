@@ -1,0 +1,3 @@
+data:
+  sampling:
+    sample_mode: fixed_sparse_history

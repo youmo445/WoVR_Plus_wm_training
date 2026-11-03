@@ -1,0 +1,3 @@
+data:
+  sampling:
+    sample_mode: random_temporal_stride

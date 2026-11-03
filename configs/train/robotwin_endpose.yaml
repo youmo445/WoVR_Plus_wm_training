@@ -1,0 +1,3 @@
+extends: [../base.yaml, ../model/wan_vace.yaml]
+data:
+  name: robotwin_endpose
