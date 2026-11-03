@@ -1,0 +1,72 @@
+# Assets are outside this checkout. Override paths explicitly for other machines.
+model:
+  family: wan_vace                 # wan_vace | wan_action | wan_physcanvas
+  model_dir: ${WOVR_ASSET_ROOT}/models/Wan2.2-TI2V-5B
+  tokenizer_path: ${WOVR_ASSET_ROOT}/models/Wan2.2-TI2V-5B/google/umt5-xxl
+  checkpoint: null                 # null: original WAN; otherwise matching WoVR+/RLinf weights
+  dtype: bfloat16                  # bfloat16 | float32 | float16
+  action_mode: cross_attn_and_adaln # cross_attn | adaln | cross_attn_and_adaln (aliases: crossattn/modulation/both)
+  action_dim: 14                   # RoboTwin joint14: left6 + gripper + right6 + gripper
+  use_text: false                  # wan_action only: false matches RLinf; wan_vace always uses text
+  vace_in_dim: 72                  # 48 action image only; 54 raw rays; 72 stack4 rays; 144 VAE rays
+  view_embeddings: 3              # 0 disables; 3 for stacked three-camera VACE
+  vace_random_init: false          # false copies VACE transformer blocks from WAN DiT
+data:
+  name: robotwin                  # robotwin | robotwin_endpose
+  base_path: ${WOVR_ASSET_ROOT}/datasets/adjust_bottle
+  train_path: null                 # override separate roots where needed
+  val_path: null                   # optional separate validation roots
+  fk_config: ${WOVR_ASSET_ROOT}/robot/aloha-agilex/config.yml
+  action_stats: null              # optional JSON {mean: [...], std: [...]} for raw actions
+  context_frames: 5               # 1 | 5 (first frame plus sampled history)
+  horizon_frames: 8               # positive multiple of 4, e.g. 8 | 16
+  resize_to: [256, 320]           # per-camera [height,width], multiples of 32
+  view_mode: three                # three | single
+  single_camera: head_camera      # head_camera | left_camera | right_camera
+  sampling:
+    sample_mode: contiguous       # contiguous | fixed_sparse_history | random_temporal_stride | fixed_sparse_history_random_temporal_stride
+    sparse_history_stride: 4
+    temporal_stride_choices: [1, 2, 3, 4]
+    temporal_stride_probs: [0.5, 0.1666666667, 0.1666666667, 0.1666666667]
+    first_round_prob: 0.05
+    context_sphere_blur_prob: 0.0
+    context_sphere_blur_camera: random
+    context_sphere_blur_radius_min: 0.06
+    context_sphere_blur_radius_max: 0.12
+    context_sphere_blur_sigma_min: 6.0
+    context_sphere_blur_sigma_max: 12.0
+    context_sphere_blur_min_radius_px: 16.0
+    context_sphere_blur_max_radius_px: 64.0
+  kwargs: {}                     # adapter-specific constructor arguments (no silent filtering)
+  cache:
+    mode: 'off'                   # off | read (preencoded) | replay (same plan, online VAE baseline)
+    root: ${WOVR_ASSET_ROOT}/cache/adjust-bottle-rgb-vace4
+    verify_sources: true          # validate source metadata once; cached __getitem__ never opens HDF5
+    verify_checksum: false        # optional SHA256 per read; shape/dtype/signature always checked
+  train_kwargs: {}
+  val_kwargs: {}
+training:
+  trainable: [dit, vace]           # WAN+action uses [dit] or [action] for projection-only tuning
+  learning_rate: 1.0e-5
+  weight_decay: 0.01
+  num_epochs: 10000
+  max_steps: 0                    # 0: full epochs; positive: explicit run limit
+  save_final_checkpoint: true     # false only for disposable speed benchmarks
+  save_steps: 10000               # optimizer updates, not microbatches
+  eval_steps: 500                 # distributed batches, newly shuffled each evaluation
+  log_steps: 50
+  gradient_accumulation_steps: 1
+  dataset_num_workers: 0
+  gradient_checkpointing: true
+  gradient_checkpointing_offload: false
+  find_unused_parameters: false
+  low_noise_offset: 1             # VACE recipe=1; original RLinf action recipe=50
+  seed: 42
+profiling:
+  enabled: false                 # per-step CUDA event spans, host calls, rank memory -> TensorBoard
+  encoder_detail: true            # false for lower-overhead cache speed comparisons
+  warmup_steps: 5                # excluded from profile_summary.json statistics
+  trace_step: 0                  # 0 disables; positive exports one rank-0 Chrome trace (excluded from stats)
+output:
+  root: ${WOVR_ASSET_ROOT}/outputs
+  task: null                     # default derived from dataset/model/sampling/key parameters

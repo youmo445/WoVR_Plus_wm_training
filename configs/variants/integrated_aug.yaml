@@ -1,0 +1,4 @@
+data:
+  sampling:
+    sample_mode: fixed_sparse_history_random_temporal_stride
+    context_sphere_blur_prob: 0.5

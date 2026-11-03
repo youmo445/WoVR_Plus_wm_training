@@ -1,0 +1,6 @@
+extends: robotwin_vace.yaml
+model:
+  family: wan_physcanvas
+  use_text: true
+training:
+  trainable: [dit]

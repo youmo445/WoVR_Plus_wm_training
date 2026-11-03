@@ -1,0 +1,5 @@
+data:
+  view_mode: single
+  single_camera: head_camera
+model:
+  view_embeddings: 0

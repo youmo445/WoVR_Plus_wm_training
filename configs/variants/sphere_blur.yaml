@@ -1,0 +1,3 @@
+data:
+  sampling:
+    context_sphere_blur_prob: 0.5

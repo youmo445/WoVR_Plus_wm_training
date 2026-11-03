@@ -1,0 +1,7 @@
+model:
+  family: wan_action
+  action_mode: cross_attn_and_adaln
+  use_text: false
+training:
+  trainable: [dit]
+  low_noise_offset: 50
